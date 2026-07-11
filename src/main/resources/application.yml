@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: 8091
 
 spring:
   application:
@@ -7,9 +7,9 @@ spring:
 
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/short_url?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true
+    url: jdbc:mysql://localhost:3306/short_url?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
     username: root
-    password: root
+    password: 123456
 
   data:
     redis:
@@ -21,6 +21,7 @@ spring:
           max-active: 8
           max-idle: 8
           min-idle: 0
+      password: 123456
 
   sql:
     init:
@@ -47,5 +48,5 @@ springdoc:
     enabled: true
 
 short-url:
-  domain: http://localhost:8080
+  domain: http://localhost:8091
   code-length: 6
