@@ -1,18 +1,17 @@
 package com.lzp.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.lzp.common.BusinessException;
 import com.lzp.dto.CreateShortUrlRequest;
 import com.lzp.dto.ShortUrlResponse;
 import com.lzp.entity.UrlMapping;
 import com.lzp.mapper.UrlMappingMapper;
 import com.lzp.service.UrlService;
+import com.lzp.service.VisitCountService;
 import com.lzp.util.Base62Util;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -30,6 +29,7 @@ public class UrlServiceImpl implements UrlService {
 
     private final UrlMappingMapper urlMappingMapper;
     private final RedisTemplate<String, String> redisTemplate;
+    private final VisitCountService visitCountService;
 
     @Value("${short-url.domain}")
     private String domain;
@@ -61,13 +61,13 @@ public class UrlServiceImpl implements UrlService {
                 throw new BusinessException("自定义短码已存在，请更换");
             }
         } else {
-            shortCode = null; // 先占位，后面根据自增ID生成
+            shortCode = null;
         }
 
         // 3. 保存到数据库获取自增ID
         UrlMapping mapping = new UrlMapping();
         mapping.setOriginalUrl(originalUrl);
-        mapping.setShortCode(shortCode != null ? shortCode : ""); // 临时占位
+        mapping.setShortCode(shortCode != null ? shortCode : "");
         mapping.setVisitCount(0L);
         mapping.setCreatedAt(LocalDateTime.now());
         urlMappingMapper.insert(mapping);
@@ -79,8 +79,8 @@ public class UrlServiceImpl implements UrlService {
             urlMappingMapper.updateById(mapping);
         }
 
-        // 5. 缓存到 Redis
-        redisTemplate.opsForValue().set(shortCode, originalUrl, REDIS_TTL);
+        // 5. 缓存到 Redis（格式: id|url，避免URL中冒号冲突）
+        redisTemplate.opsForValue().set(shortCode, mapping.getId() + "|" + originalUrl, REDIS_TTL);
 
         log.info("短链生成成功: {} -> {}", shortCode, originalUrl);
         return buildResponse(mapping);
@@ -88,13 +88,20 @@ public class UrlServiceImpl implements UrlService {
 
     @Override
     public String getOriginalUrl(String shortCode) {
-        // 1. 先从 Redis 查
-        String originalUrl = redisTemplate.opsForValue().get(shortCode);
-        if (StringUtils.hasText(originalUrl)) {
-            // 异步更新访问计数（通过ID）
-            Long id = Base62Util.decode(shortCode);
-            incrementVisitCountAsync(id);
-            return originalUrl;
+        // 1. 先从 Redis 查（格式: id|url）
+        String cachedValue = redisTemplate.opsForValue().get(shortCode);
+        if (StringUtils.hasText(cachedValue)) {
+            int pipeIndex = cachedValue.indexOf('|');
+            if (pipeIndex > 0) {
+                try {
+                    long id = Long.parseLong(cachedValue.substring(0, pipeIndex));
+                    visitCountService.increment(id);
+                } catch (NumberFormatException e) {
+                    log.warn("Redis缓存ID解析失败: {}", cachedValue);
+                }
+                return cachedValue.substring(pipeIndex + 1);
+            }
+            return cachedValue;
         }
 
         // 2. Redis 未命中，查数据库
@@ -108,11 +115,12 @@ public class UrlServiceImpl implements UrlService {
             throw new BusinessException(410, "短链接已过期");
         }
 
-        // 4. 回写 Redis
-        redisTemplate.opsForValue().set(shortCode, mapping.getOriginalUrl(), REDIS_TTL);
+        // 4. 回写 Redis（id|url 格式）
+        redisTemplate.opsForValue().set(shortCode,
+                mapping.getId() + "|" + mapping.getOriginalUrl(), REDIS_TTL);
 
         // 5. 异步更新访问计数
-        incrementVisitCountAsync(mapping.getId());
+        visitCountService.increment(mapping.getId());
 
         return mapping.getOriginalUrl();
     }
@@ -124,18 +132,6 @@ public class UrlServiceImpl implements UrlService {
             throw new BusinessException(404, "短链接不存在");
         }
         return buildResponse(mapping);
-    }
-
-    /**
-     * 异步更新访问计数
-     */
-    @Async
-    public void incrementVisitCountAsync(Long id) {
-        try {
-            urlMappingMapper.incrementVisitCount(id);
-        } catch (Exception e) {
-            log.error("更新访问计数失败: id={}", id, e);
-        }
     }
 
     /**
