@@ -1,5 +1,5 @@
 server:
-  port: 8091
+  port: 8093
 
 spring:
   application:
@@ -48,5 +48,5 @@ springdoc:
     enabled: true
 
 short-url:
-  domain: http://localhost:8091
+  domain: http://localhost:8093
   code-length: 6

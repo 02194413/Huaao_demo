@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>短链接生成器</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px;
+        }
+        .container { background: #fff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,.2); max-width: 640px; width: 100%; padding: 36px 32px; }
+        h1 { text-align: center; color: #333; font-size: 24px; margin-bottom: 8px; }
+        .subtitle { text-align: center; color: #999; font-size: 13px; margin-bottom: 28px; }
+        .section { margin-bottom: 24px; }
+        .section-title { font-size: 14px; font-weight: 600; color: #555; margin-bottom: 10px; border-left: 3px solid #667eea; padding-left: 8px; }
+        .input-row { display: flex; gap: 10px; }
+        input[type="text"] { flex: 1; padding: 12px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; outline: none; transition: border-color .2s; }
+        input[type="text"]:focus { border-color: #667eea; }
+        button { padding: 12px 24px; background: #667eea; color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: all .2s; }
+        button:hover { background: #5a6fd6; transform: translateY(-1px); }
+        button:active { transform: translateY(0); }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .result-box { background: #f8f9fa; border-radius: 8px; padding: 16px; margin-top: 12px; display: none; }
+        .result-box.show { display: block; }
+        .result-item { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; font-size: 13px; }
+        .result-item:last-child { border-bottom: none; }
+        .result-label { color: #888; }
+        .result-value { color: #333; font-weight: 500; word-break: break-all; text-align: right; }
+        .result-value a { color: #667eea; text-decoration: none; }
+        .result-value a:hover { text-decoration: underline; }
+        .error { color: #e74c3c; font-size: 13px; margin-top: 8px; display: none; }
+        .error.show { display: block; }
+        .loading { display: none; text-align: center; color: #888; font-size: 13px; margin-top: 8px; }
+        .loading.show { display: block; }
+        .btn-group { display: flex; gap: 8px; margin-top: 10px; }
+        .btn-secondary { background: #6c757d; }
+        .btn-secondary:hover { background: #5a6268; }
+        .stats-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+        .stat-card { background: #f8f9fa; border-radius: 8px; padding: 14px; text-align: center; }
+        .stat-value { font-size: 22px; font-weight: 700; color: #667eea; }
+        .stat-label { font-size: 12px; color: #888; margin-top: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>短链接生成器</h1>
+        <p class="subtitle">Short URL Generator — 输入长链接，一键生成短链</p>
+
+        <!-- 生成短链 -->
+        <div class="section">
+            <div class="section-title">生成短链接</div>
+            <div class="input-row">
+                <input type="text" id="urlInput" placeholder="请输入长链接，如 https://www.example.com/very-long-path">
+                <button id="shortenBtn" onclick="shorten()">生成短链</button>
+            </div>
+            <div class="loading" id="loading">正在生成...</div>
+            <div class="error" id="error"></div>
+            <div class="result-box" id="resultBox">
+                <div class="result-item"><span class="result-label">短链接</span><span class="result-value"><a id="shortUrl" href="#" target="_blank"></a></span></div>
+                <div class="result-item"><span class="result-label">短码</span><span class="result-value" id="shortCode"></span></div>
+                <div class="result-item"><span class="result-label">原始URL</span><span class="result-value" id="originalUrl"></span></div>
+                <div class="btn-group">
+                    <button class="btn-secondary" onclick="copyShortUrl()">复制短链接</button>
+                    <button class="btn-secondary" onclick="testRedirect()">测试跳转</button>
+                    <button class="btn-secondary" onclick="lookupStats()">查看统计</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 统计信息 -->
+        <div class="section">
+            <div class="section-title">短链统计</div>
+            <div class="input-row">
+                <input type="text" id="lookupInput" placeholder="输入短码查询统计">
+                <button onclick="lookupStatsByCode()">查询</button>
+            </div>
+            <div class="stats-row" id="statsRow" style="display:none">
+                <div class="stat-card"><div class="stat-value" id="visitCount">0</div><div class="stat-label">访问次数</div></div>
+                <div class="stat-card"><div class="stat-value" id="createDate">-</div><div class="stat-label">创建时间</div></div>
+            </div>
+            <div class="error" id="lookupError"></div>
+        </div>
+    </div>
+
+    <script>
+        const API = '/api/shorten';
+        let lastResult = null;
+
+        async function shorten() {
+            const url = document.getElementById('urlInput').value.trim();
+            if (!url) { showError('请输入URL'); return; }
+
+            hideError(); showLoading(true);
+            try {
+                const res = await fetch(API, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: url })
+                });
+                const data = await res.json();
+                if (data.code === 200) {
+                    lastResult = data.data;
+                    showResult(data.data);
+                } else {
+                    showError(data.message || '生成失败');
+                }
+            } catch (e) {
+                showError('网络错误，请检查服务是否启动');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function showResult(data) {
+            document.getElementById('shortUrl').href = data.shortUrl;
+            document.getElementById('shortUrl').textContent = data.shortUrl;
+            document.getElementById('shortCode').textContent = data.shortCode;
+            document.getElementById('originalUrl').textContent = data.originalUrl;
+            document.getElementById('resultBox').classList.add('show');
+        }
+
+        function copyShortUrl() {
+            if (!lastResult) return;
+            navigator.clipboard.writeText(lastResult.shortUrl).then(() => alert('已复制到剪贴板'));
+        }
+
+        function testRedirect() {
+            if (!lastResult) return;
+            window.open(lastResult.shortUrl, '_blank');
+        }
+
+        function lookupStats() {
+            if (!lastResult) return;
+            document.getElementById('lookupInput').value = lastResult.shortCode;
+            lookupStatsByCode();
+        }
+
+        async function lookupStatsByCode() {
+            const code = document.getElementById('lookupInput').value.trim();
+            if (!code) return;
+            hideLookupError();
+            try {
+                const res = await fetch('/api/info/' + code);
+                const data = await res.json();
+                if (data.code === 200) {
+                    document.getElementById('visitCount').textContent = data.data.visitCount;
+                    document.getElementById('createDate').textContent = data.data.createdAt ? data.data.createdAt.split('T')[0] : '-';
+                    document.getElementById('statsRow').style.display = 'grid';
+                } else {
+                    showLookupError(data.message || '查询失败');
+                }
+            } catch (e) {
+                showLookupError('网络错误');
+            }
+        }
+
+        function showLoading(v) { document.getElementById('loading').classList.toggle('show', v); }
+        function showError(msg) {
+            const el = document.getElementById('error');
+            el.textContent = msg;
+            el.classList.add('show');
+        }
+        function hideError() { document.getElementById('error').classList.remove('show'); }
+        function showLookupError(msg) {
+            const el = document.getElementById('lookupError');
+            el.textContent = msg;
+            el.classList.add('show');
+        }
+        function hideLookupError() { document.getElementById('lookupError').classList.remove('show'); }
+
+        // 回车键触发生成
+        document.getElementById('urlInput').addEventListener('keydown', e => { if (e.key === 'Enter') shorten(); });
+        document.getElementById('lookupInput').addEventListener('keydown', e => { if (e.key === 'Enter') lookupStatsByCode(); });
+    </script>
+</body>
+</html>

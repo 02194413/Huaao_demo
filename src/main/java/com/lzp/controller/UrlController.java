@@ -31,7 +31,7 @@ public class UrlController {
     }
 
     @Operation(summary = "短链接跳转", description = "访问短链接，302重定向到原始URL")
-    @GetMapping("/{shortCode}")
+    @GetMapping("/{shortCode:[0-9A-Za-z]+}")
     public RedirectView redirect(
             @Parameter(description = "短码") @PathVariable String shortCode) {
         String originalUrl = urlService.getOriginalUrl(shortCode);
